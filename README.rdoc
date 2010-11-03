@@ -1,0 +1,82 @@
+= RestfulPermissions
+
+This plugin is a lightweight implementation of the RESTful permissions idea from http://pivotallabs.com/users/nick/blog/articles/272-access-control-permissions-in-rails and http://clearcove.ca/blog/2008/08/recipe-restful-permissions-for-rails/ .
+
+RestfulPermissions implements a recipe for model permissions. The difference between with validations and permissions is that, when a permission is violated, a RestfulPermissions::Violation exception will be thrown with no explicit explanatory message, as it is not needed to give explanations to attackers. Also, permission conditions can be checked previously to performing the CRUD operation in order to show users only the links they can use.
+
+The plugin can be used for setting security constraints and checking them. This way, if, e.g., a post is not editable by a user, the "edit" link will not be shown to him. As well, if the user sends a crafted form and attempts to edit the post, the edition will be rejected. The plugin depends on an authentication plugin, such as restful_authentication.
+
+= Example
+
+  class Post < ActiveRecord::Base
+    belongs_to :user
+    validates :title,   :presence => true
+    validates :content, :presence => true
+    
+    def createable_by? actor
+      !actor.nil? and user == actor
+    end
+
+    def updatable_by? actor
+      user == actor and !changes['user_id'] and !changes['title']
+    end
+
+    def destroyable_by? actor
+      user == actor and !changes['user_id']
+    end
+  end
+
+Methods create_by!, update_by! and destroy_by! can be used in the controller to perform permission checks:
+
+  class PostsController < ActionController::Base
+    def index
+      ...
+    end
+    def new
+      ...
+    end
+    def create
+      @post = Post.new params[:post]
+      @post.create_by! current_user
+      respond_with @post
+    end
+
+    def update
+      @post = Post.find params[:id]
+      @post.attributes = params[:post]
+      @post.update_by! current_user
+      respond_with @post
+    end
+
+    def destroy
+      @post = Post.find params[:id]
+      @post.destroy_by! current_user
+      respond_with @post
+    end
+  end
+
+create_by!, update_by! and destroy_by! automatically save (or destroy) the record, or raise a Violation exception in case the current_user is not allowed. 
+* If you need to call a method different from save or destroy, you can specify it in two ways:
+  @post.create_by! current_user, :with=>:save_with_captcha
+
+  @post.create_by! current_user do
+    @post.save :validate=>:false
+  end
+* A method named *_by will be executed before checking permissions. This makes possible these kinds of constructs:
+  class Post
+    def show_by user # Will be called by @post.show_by!(current_user)
+      readers << user
+    end
+  end
+* If you only want to raise the exception, you can use about_to_create_by!, about_to_update_by! or about_to_destroy_by!.
+* You can capture the Violation exception and perform any action by adding at ApplicationController the next code:
+  rescue_from RestfulPermissions::Violation do
+    flash[:alert] = "Permission denied"
+    redirect_to root_path
+  end
+  
+You can use these idioms with any action, such as activate, restore, read, etc. (not just create, update or destroy). Also, you should use *able_by?(current_user) methods in your views to hide links to users. If those links are not hidden, their requests would be rejected in the controller, but showing them makes it a poor browsing experience.
+
+This approach avoids injecting session data into the model using tricks such as Thread.current in order to respect the MVC pattern.
+
+Copyright (c) 2010 José Ignacio Fernández, released under the MIT license
